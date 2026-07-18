@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -77,6 +79,8 @@ func (r *Resolver) Resolve(ctx context.Context, input string) (finalURL, markdow
 	}
 
 	var probed []string
+	var transportErr error
+	sawNotMarkdown := false
 	for i, p := range probes {
 		timeout := fetch.ProbeTimeout
 		if committed && i == 0 {
@@ -88,12 +92,40 @@ func (r *Resolver) Resolve(ctx context.Context, input string) (finalURL, markdow
 				return "", "", ctx.Err()
 			}
 			probed = append(probed, p.url)
+			if isNotMarkdown(err) {
+				sawNotMarkdown = true
+			} else {
+				transportErr = err
+			}
 			continue
 		}
 		r.remember(hostOf(final, u.Host), p.pat)
 		return final, body, nil
 	}
+	// NotMarkdownError means "all candidates HTML or missing". When no
+	// probe even reached that verdict — offline, DNS failure, connection
+	// refused — surface the transport error instead, so the UI keeps the
+	// current page and reports the failure in the statusbar.
+	if transportErr != nil && !sawNotMarkdown {
+		return "", "", transportErr
+	}
 	return "", "", &NotMarkdownError{URL: u.String(), candidates: probed}
+}
+
+// isNotMarkdown reports whether a probe failure is evidence the
+// candidate is HTML or missing (ErrHTML, 404, timeout — per the spec)
+// rather than a transport-level failure such as a DNS error or a
+// refused connection.
+func isNotMarkdown(err error) bool {
+	if errors.Is(err, fetch.ErrHTML) {
+		return true
+	}
+	var status *fetch.StatusError
+	if errors.As(err, &status) {
+		return status.Code == http.StatusNotFound
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 // Forget drops the cached pattern for host, forcing the next Resolve

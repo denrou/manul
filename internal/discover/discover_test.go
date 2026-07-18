@@ -276,6 +276,37 @@ func TestResolveUsesCachedPatternAndForget(t *testing.T) {
 	}
 }
 
+func TestResolveTransportErrorNotMaskedAsNotMarkdown(t *testing.T) {
+	// Closing the server first guarantees every probe fails with a
+	// connection error rather than an HTML/404 verdict.
+	srv := httptest.NewServer(http.NotFoundHandler())
+	target := srv.URL
+	srv.Close()
+
+	var r Resolver
+	_, _, err := r.Resolve(context.Background(), target)
+	if err == nil {
+		t.Fatal("Resolve succeeded against a closed server")
+	}
+	var nme *NotMarkdownError
+	if errors.As(err, &nme) {
+		t.Errorf("transport failure misreported as NotMarkdownError: %v", err)
+	}
+}
+
+func TestResolveAllMissingReturnsNotMarkdownError(t *testing.T) {
+	cs := newCountingServer(t, func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	})
+
+	var r Resolver
+	_, _, err := r.Resolve(context.Background(), cs.URL)
+	var nme *NotMarkdownError
+	if !errors.As(err, &nme) {
+		t.Fatalf("err = %v, want *NotMarkdownError for all-404 probes", err)
+	}
+}
+
 func TestResolveInvalidInput(t *testing.T) {
 	var r Resolver
 	for _, input := range []string{"", "ftp://example.com/x.md", "https://"} {

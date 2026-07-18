@@ -38,13 +38,17 @@ func (s *Store) Path() string {
 
 // Add appends a bookmark, creating the file (and its directory) if
 // missing. Bookmarks are deduplicated by URL: adding an existing URL is
-// a no-op, keeping the original title.
+// a no-op, keeping the original title. The new entry is appended to the
+// existing file content rather than re-rendering it, so hand-edited
+// lines the parser does not recognize survive — the file is a real
+// markdown page the user may edit.
 func (s *Store) Add(title, url string) error {
-	existing, err := s.list()
-	if err != nil {
+	data, err := os.ReadFile(s.path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	for _, b := range existing {
+	content := string(data)
+	for _, b := range parse(content) {
 		if b.URL == url {
 			return nil
 		}
@@ -52,18 +56,27 @@ func (s *Store) Add(title, url string) error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 		return err
 	}
-	existing = append(existing, Bookmark{Title: title, URL: url})
-	return os.WriteFile(s.path, []byte(render(existing)), 0o644)
+	entry := fmt.Sprintf("- [%s](%s)\n", title, url)
+	if strings.TrimSpace(content) == "" {
+		content = heading + "\n\n"
+	} else if !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	return os.WriteFile(s.path, []byte(content+entry), 0o644)
 }
 
 // Markdown returns the bookmarks page text, or "" when no bookmarks
-// exist (missing file or a page with no entries).
-func (s *Store) Markdown() string {
+// exist (missing file or a page with no entries). A read failure is
+// reported instead of being mistaken for an empty store.
+func (s *Store) Markdown() (string, error) {
 	entries, err := s.list()
-	if err != nil || len(entries) == 0 {
-		return ""
+	if err != nil {
+		return "", err
 	}
-	return render(entries)
+	if len(entries) == 0 {
+		return "", nil
+	}
+	return render(entries), nil
 }
 
 func render(entries []Bookmark) string {
@@ -85,14 +98,19 @@ func (s *Store) list() ([]Bookmark, error) {
 		}
 		return nil, err
 	}
+	return parse(string(data)), nil
+}
+
+// parse extracts the recognized bookmark lines of a page.
+func parse(content string) []Bookmark {
 	var entries []Bookmark
-	for _, line := range strings.Split(string(data), "\n") {
+	for _, line := range strings.Split(content, "\n") {
 		b, ok := parseLine(line)
 		if ok {
 			entries = append(entries, b)
 		}
 	}
-	return entries, nil
+	return entries
 }
 
 // parseLine matches "- [title](url)". The separator is the LAST "](" on

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -9,6 +10,7 @@ import (
 
 	"github.com/denrou/manul/internal/bookmarks"
 	"github.com/denrou/manul/internal/config"
+	"github.com/denrou/manul/internal/discover"
 )
 
 func testModel(t *testing.T) Model {
@@ -95,6 +97,135 @@ func TestEscCancelMakesInFlightResultStale(t *testing.T) {
 	m, _ = apply(t, m, docLoadedMsg{seq: seq, url: "https://late.test/", markdown: "# late"})
 	if m.page.url != startURL {
 		t.Error("late result of a canceled fetch was applied")
+	}
+}
+
+func TestEscCancelsInFlightContext(t *testing.T) {
+	m := testModel(t)
+	m, _ = apply(t, m, navigateToMsg{url: "example.com"})
+	if m.cancel == nil || m.navCtx == nil {
+		t.Fatal("navigation did not arm a cancelable context")
+	}
+	ctx := m.navCtx
+	if ctx.Err() != nil {
+		t.Fatalf("context canceled before esc: %v", ctx.Err())
+	}
+
+	m, _ = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if ctx.Err() != context.Canceled {
+		t.Error("esc did not cancel the in-flight fetch context")
+	}
+	_ = m
+}
+
+func TestLoadFailedKeepsPageAndShowsError(t *testing.T) {
+	m := testModel(t)
+	(&m).showDocument("https://a.test/a.md", "# A")
+	backLen := len(m.back)
+
+	m, _ = apply(t, m, navigateToMsg{url: "b.test"})
+	m, _ = apply(t, m, loadFailedMsg{seq: m.navSeq, err: errFake})
+
+	if m.page.url != "https://a.test/a.md" {
+		t.Errorf("fetch failure replaced the page: %s", m.page.url)
+	}
+	if len(m.back) != backLen {
+		t.Errorf("fetch failure changed history: back len = %d, want %d", len(m.back), backLen)
+	}
+	if !strings.Contains(m.status, "fake failure") {
+		t.Errorf("status = %q, want the fetch error", m.status)
+	}
+	if m.loading {
+		t.Error("loading still set after a failed load")
+	}
+}
+
+func TestLoadFailedNotMarkdownShowsFallbackPage(t *testing.T) {
+	m := testModel(t)
+	(&m).showDocument("https://a.test/a.md", "# A")
+	backLen := len(m.back)
+
+	m, _ = apply(t, m, navigateToMsg{url: "https://htmlonly.test/"})
+	m, _ = apply(t, m, loadFailedMsg{seq: m.navSeq, err: &discover.NotMarkdownError{URL: "https://htmlonly.test/"}})
+
+	if m.page.url != "https://htmlonly.test/" {
+		t.Errorf("fallback page not shown: page = %s", m.page.url)
+	}
+	if !strings.Contains(m.page.markdown, "No markdown here") {
+		t.Errorf("fallback markdown missing:\n%s", m.page.markdown)
+	}
+	if !strings.Contains(m.page.markdown, "https://htmlonly.test/") {
+		t.Errorf("fallback page missing the original URL:\n%s", m.page.markdown)
+	}
+	if len(m.back) != backLen+1 {
+		t.Errorf("fallback page did not enter history: back len = %d, want %d", len(m.back), backLen+1)
+	}
+}
+
+func TestReloadReplacesWithoutHistoryPush(t *testing.T) {
+	m := testModel(t)
+	long := "# A\n\n" + strings.Repeat("line of text\n\n", 120)
+	(&m).showDocument("https://a.test/a.md", long)
+	m.viewport.SetYOffset(30)
+	frac := m.currentFraction()
+	backLen := len(m.back)
+
+	m, cmd := apply(t, m, runeKey('r'))
+	if cmd == nil {
+		t.Fatal("reload returned no command")
+	}
+	if !m.replaceNext || !m.loading {
+		t.Fatalf("reload did not start a replacing navigation: replaceNext=%v loading=%v", m.replaceNext, m.loading)
+	}
+
+	m, _ = apply(t, m, docLoadedMsg{seq: m.navSeq, url: "https://a.test/a.md", markdown: long})
+	if len(m.back) != backLen {
+		t.Errorf("reload pushed a duplicate history entry: back len = %d, want %d", len(m.back), backLen)
+	}
+	if m.replaceNext {
+		t.Error("replaceNext not consumed by the reload's load")
+	}
+	want := restoreOffset(frac, m.viewport.TotalLineCount(), m.viewport.Height)
+	if m.viewport.YOffset != want {
+		t.Errorf("reload reset scroll: YOffset = %d, want %d", m.viewport.YOffset, want)
+	}
+}
+
+// A reload that is canceled (or superseded) must not leak its replace
+// semantics into the next navigation — that would silently drop the
+// current page from history and misapply its scroll position.
+func TestCanceledReloadDoesNotCorruptNextNavigation(t *testing.T) {
+	m := testModel(t)
+	(&m).showDocument("https://a.test/a.md", "# A")
+	backLen := len(m.back)
+
+	m, _ = apply(t, m, runeKey('r'))
+	staleSeq := m.navSeq
+	m, _ = apply(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	m, _ = apply(t, m, loadFailedMsg{seq: staleSeq, err: errFake}) // stale, dropped
+
+	m, _ = apply(t, m, navigateToMsg{url: "b.test"})
+	m, _ = apply(t, m, docLoadedMsg{seq: m.navSeq, url: "https://b.test/llms.txt", markdown: "# B"})
+
+	if m.page.url != "https://b.test/llms.txt" {
+		t.Fatalf("navigation after canceled reload landed on %s", m.page.url)
+	}
+	if len(m.back) != backLen+1 {
+		t.Fatalf("history corrupted: back len = %d, want %d (page A dropped)", len(m.back), backLen+1)
+	}
+	m, _ = apply(t, m, tea.KeyMsg{Type: tea.KeyBackspace})
+	if m.page.url != "https://a.test/a.md" {
+		t.Errorf("backspace after canceled reload landed on %s, want page A", m.page.url)
+	}
+}
+
+func TestDigitsVisibleWhileLoading(t *testing.T) {
+	m := testModel(t)
+	m, _ = apply(t, m, navigateToMsg{url: "example.com"})
+	m, _ = apply(t, m, runeKey('4'))
+	m, _ = apply(t, m, runeKey('2'))
+	if got := m.statusLeft(); !strings.Contains(got, "follow: 42_") {
+		t.Errorf("statusbar while loading = %q, want the digit buffer shown", got)
 	}
 }
 
@@ -259,6 +390,39 @@ func TestTabSelectionCycles(t *testing.T) {
 	m, _ = apply(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if !m.loading || m.loadingHost != "example.com" {
 		t.Errorf("enter on selection did not navigate: loading=%v host=%q", m.loading, m.loadingHost)
+	}
+}
+
+// Tab on a scrolled viewport must pick the first marker at or below the
+// viewport top and scroll minimally to reveal it — this drives the glue
+// in selectLink through Update, not just the pure pickers.
+func TestTabOnScrolledViewportPicksFirstVisible(t *testing.T) {
+	m := testModel(t)
+	var src strings.Builder
+	src.WriteString("[top](https://example.com/top.md)\n\n")
+	for i := 0; i < 100; i++ {
+		src.WriteString("filler line\n\n")
+	}
+	src.WriteString("[bottom](https://example.com/bottom.md)\n")
+	(&m).setPage("https://a.test/", src.String())
+	if len(m.markerLines) != 2 {
+		t.Fatalf("markerLines = %v, want 2 markers", m.markerLines)
+	}
+
+	line1, line2 := m.markerLines[1], m.markerLines[2]
+	mid := (line1 + line2) / 2
+	if mid <= line1 || line2 <= mid+m.viewport.Height-1 {
+		t.Fatalf("test setup: offset %d does not separate markers on lines %d and %d (height %d)", mid, line1, line2, m.viewport.Height)
+	}
+	m.viewport.SetYOffset(mid)
+
+	m, _ = apply(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	if m.selected != 2 {
+		t.Fatalf("tab selected %d, want 2 (first marker at or below viewport top)", m.selected)
+	}
+	want := minimalScroll(mid, m.viewport.Height, line2)
+	if m.viewport.YOffset != want {
+		t.Errorf("viewport offset = %d, want %d (minimal scroll to reveal the marker)", m.viewport.YOffset, want)
 	}
 }
 

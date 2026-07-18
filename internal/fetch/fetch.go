@@ -29,6 +29,18 @@ const (
 // markdown. Match it with errors.Is; manul never renders HTML (ADR-0007).
 var ErrHTML = errors.New("response is HTML, not markdown")
 
+// StatusError reports a non-200 HTTP response. Callers use the code to
+// tell "document missing" (404) from server-side failures.
+type StatusError struct {
+	URL    string
+	Code   int
+	Status string
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("GET %s: %s", e.URL, e.Status)
+}
+
 // Normalize turns user input into a fetchable URL:
 //   - a bare domain gets an https:// scheme
 //   - an empty path defaults to /llms.txt
@@ -82,7 +94,7 @@ func Markdown(ctx context.Context, rawURL string, timeout time.Duration) (finalU
 	finalURL = resp.Request.URL.String()
 
 	if resp.StatusCode != http.StatusOK {
-		return finalURL, "", fmt.Errorf("GET %s: %s", finalURL, resp.Status)
+		return finalURL, "", &StatusError{URL: finalURL, Code: resp.StatusCode, Status: resp.Status}
 	}
 	if isHTMLContentType(resp.Header.Get("Content-Type")) {
 		return finalURL, "", fmt.Errorf("%s: %w", finalURL, ErrHTML)

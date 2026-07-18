@@ -1,11 +1,13 @@
 package ui
 
 import (
+	"bytes"
 	"math"
 	"net/url"
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -103,7 +105,15 @@ func hostOf(rawURL string) string {
 	return u.Host
 }
 
-// openExternal opens a URL in the system browser.
+// openerWait bounds how long openExternal waits for the opener's exit
+// status: `open`/`xdg-open` normally exit immediately, but some xdg-open
+// configurations block until the browser itself exits.
+const openerWait = 3 * time.Second
+
+// openExternal opens a URL in the system browser. The opener's exit
+// status is observed (with a timeout) before success is reported:
+// `xdg-open` starts fine yet exits non-zero when no handler is
+// configured, and a premature "opened" message would strand the user.
 func openExternal(target string) tea.Cmd {
 	return func() tea.Msg {
 		var cmd *exec.Cmd
@@ -113,10 +123,27 @@ func openExternal(target string) tea.Cmd {
 		default:
 			cmd = exec.Command("xdg-open", target)
 		}
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
 		if err := cmd.Start(); err != nil {
 			return statusMsg("open failed: " + err.Error())
 		}
-		go func() { _ = cmd.Wait() }()
-		return statusMsg("opened in browser: " + target)
+		done := make(chan error, 1)
+		go func() { done <- cmd.Wait() }()
+		select {
+		case err := <-done:
+			if err != nil {
+				msg := "open failed: " + err.Error()
+				if detail := strings.TrimSpace(stderr.String()); detail != "" {
+					msg += " — " + detail
+				}
+				return statusMsg(msg)
+			}
+			return statusMsg("opened in browser: " + target)
+		case <-time.After(openerWait):
+			// Still running after the grace period: assume a blocking
+			// opener that launched the browser successfully.
+			return statusMsg("opened in browser: " + target)
+		}
 	}
 }

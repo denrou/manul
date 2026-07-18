@@ -33,9 +33,13 @@ func run() error {
 		return nil
 	}
 
+	var initialStatus string
 	cfg, err := config.Load()
 	if err != nil {
+		// The stderr line disappears under the altscreen within
+		// milliseconds; the statusbar note is what the user will see.
 		fmt.Fprintln(os.Stderr, "manul: config:", err, "(using defaults)")
+		initialStatus = "config ignored: " + err.Error()
 		cfg = config.Defaults()
 	}
 
@@ -53,11 +57,12 @@ func run() error {
 	}
 
 	model := ui.New(ui.Options{
-		Config:     cfg,
-		Style:      style,
-		Resolver:   &discover.Resolver{},
-		Bookmarks:  store,
-		InitialURL: flag.Arg(0),
+		Config:        cfg,
+		Style:         style,
+		Resolver:      &discover.Resolver{},
+		Bookmarks:     store,
+		InitialURL:    flag.Arg(0),
+		InitialStatus: initialStatus,
 	})
 
 	opts := []tea.ProgramOption{tea.WithAltScreen()}

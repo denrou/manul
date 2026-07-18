@@ -102,13 +102,18 @@ func findMarker(rendered string, n int) (start, end int, ok bool) {
 
 // highlightMarker restyles the nth link marker with reverse video on top
 // of the cached rendered string — no glamour pass per selection change.
-// Reverse video is re-asserted after every ANSI sequence inside the span
-// because glamour resets styling between its chunks.
 func highlightMarker(rendered string, n int) (string, bool) {
 	start, end, ok := findMarker(rendered, n)
 	if !ok {
 		return rendered, false
 	}
+	return highlightSpan(rendered, start, end), true
+}
+
+// highlightSpan wraps rendered[start:end] in reverse video. Reverse video
+// is re-asserted after every ANSI sequence inside the span because
+// glamour resets styling between its chunks.
+func highlightSpan(rendered string, start, end int) string {
 	span := rendered[start:end]
 	var b strings.Builder
 	b.Grow(len(rendered) + 4*len(reverseOn))
@@ -128,7 +133,7 @@ func highlightMarker(rendered string, n int) (string, bool) {
 	}
 	b.WriteString(reverseOff)
 	b.WriteString(rendered[end:])
-	return b.String(), true
+	return b.String()
 }
 
 // markerLine returns the 0-based rendered line holding link n's marker.
@@ -140,16 +145,142 @@ func markerLine(rendered string, n int) (int, bool) {
 	return strings.Count(rendered[:start], "\n"), true
 }
 
-// markerLineIndex maps each annotatable link index to its rendered line.
-func markerLineIndex(rendered string, links []doc.Link) map[int]int {
-	out := make(map[int]int, len(links))
+// markerLoc is the rendered location of one link marker.
+type markerLoc struct {
+	line       int // 0-based rendered line
+	start, end int // byte span, including interleaved ANSI sequences
+}
+
+// markerHit is one "[n]" occurrence found while scanning rendered output.
+type markerHit struct {
+	index int
+	loc   markerLoc
+	bold  bool
+}
+
+// markerIndex maps each annotatable link index to its rendered marker
+// location using a single left-to-right scan of the rendered string —
+// O(rendered bytes), independent of the link count, so link-heavy
+// documents (llms-full.txt) index in milliseconds.
+//
+// Annotate emits markers in document order, so occurrences are resolved
+// in ascending index order with a moving position: link n's marker must
+// come after link n-1's. That also keeps a bold literal like "# Notes
+// [2]" from shadowing the real **[2]** marker further down. Bold
+// occurrences (the **[n]** signature) win over plain ones; plain
+// occurrences are the spec-allowed fallback for styles without bold.
+func markerIndex(rendered string, links []doc.Link) map[int]markerLoc {
+	wanted := make(map[int]bool, len(links))
+	order := make([]int, 0, len(links))
 	for _, l := range links {
-		if !l.Annotatable() {
+		if l.Annotatable() {
+			wanted[l.Index] = true
+			order = append(order, l.Index) // document order: ascending
+		}
+	}
+	if len(order) == 0 {
+		return nil
+	}
+	hits := scanMarkers(rendered, wanted)
+	out := make(map[int]markerLoc, len(order))
+	pos := 0
+	lo := 0
+	for _, idx := range order {
+		for lo < len(hits) && hits[lo].loc.start < pos {
+			lo++
+		}
+		pick := -1
+		for h := lo; h < len(hits); h++ {
+			if hits[h].index != idx {
+				continue
+			}
+			if pick < 0 {
+				pick = h
+			}
+			if hits[h].bold {
+				pick = h
+				break
+			}
+		}
+		if pick < 0 {
+			continue // marker lost in rendering; digits still work
+		}
+		out[idx] = hits[pick].loc
+		pos = hits[pick].loc.end
+	}
+	return out
+}
+
+// scanMarkers finds every "[n]" occurrence whose n is in wanted, in one
+// ANSI-state-tracking pass, recording line, span, and the bold state in
+// effect at the opening bracket.
+func scanMarkers(rendered string, wanted map[int]bool) []markerHit {
+	var hits []markerHit
+	bold := false
+	line := 0
+	i := 0
+	for i < len(rendered) {
+		if isCSIStart(rendered, i) {
+			length, params, sgr := readCSI(rendered, i)
+			if sgr {
+				bold = applyBold(bold, params)
+			}
+			i += length
 			continue
 		}
-		if line, ok := markerLine(rendered, l.Index); ok {
-			out[l.Index] = line
+		switch rendered[i] {
+		case '\n':
+			line++
+		case '[':
+			if n, end, ok := matchIndexMarker(rendered, i); ok && wanted[n] {
+				hits = append(hits, markerHit{
+					index: n,
+					loc:   markerLoc{line: line, start: i, end: end},
+					bold:  bold,
+				})
+			}
 		}
+		i++
+	}
+	return hits
+}
+
+// matchIndexMarker matches "[<digits>]" at the '[' at i, skipping ANSI
+// CSI sequences between characters, returning the number and the offset
+// just past ']'.
+func matchIndexMarker(s string, i int) (n, end int, ok bool) {
+	digits := 0
+	j := i + 1
+	for j < len(s) {
+		if isCSIStart(s, j) {
+			length, _, _ := readCSI(s, j)
+			j += length
+			continue
+		}
+		c := s[j]
+		switch {
+		case c >= '0' && c <= '9':
+			if digits >= 7 {
+				return 0, 0, false
+			}
+			n = n*10 + int(c-'0')
+			digits++
+			j++
+		case c == ']' && digits > 0:
+			return n, j + 1, true
+		default:
+			return 0, 0, false
+		}
+	}
+	return 0, 0, false
+}
+
+// markerLineIndex maps each annotatable link index to its rendered line.
+func markerLineIndex(rendered string, links []doc.Link) map[int]int {
+	locs := markerIndex(rendered, links)
+	out := make(map[int]int, len(locs))
+	for idx, loc := range locs {
+		out[idx] = loc.line
 	}
 	return out
 }

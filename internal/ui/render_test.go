@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -136,6 +137,83 @@ func TestMarkerSignatureAgainstGlamour(t *testing.T) {
 	lines := markerLineIndex(rendered, d.Links)
 	if len(lines) != 2 {
 		t.Errorf("markerLineIndex found %d markers, want 2", len(lines))
+	}
+}
+
+func renderThroughGlamour(t *testing.T, src string, width int) (string, []doc.Link) {
+	t.Helper()
+	d := doc.Parse("https://example.com/", src)
+	annotated := doc.Annotate(src, d.Links, 0)
+	r, err := glamour.NewTermRenderer(glamour.WithStandardStyle("dark"), glamour.WithWordWrap(width))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered, err := r.Render(annotated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rendered, d.Links
+}
+
+// Glamour renders headings bold, so a literal "[2]" in a heading carries
+// the same ANSI signature as a real marker. Ascending-order resolution
+// must keep it from shadowing the real **[2]**.
+func TestMarkerIndexIgnoresBoldLiteralInHeading(t *testing.T) {
+	src := "# Notes [2]\n\nsee [one](https://example.com/one.md)\n\nand [two](https://example.com/two.md)\n"
+	rendered, links := renderThroughGlamour(t, src, 80)
+	lines := markerLineIndex(rendered, links)
+	if len(lines) != 2 {
+		t.Fatalf("markerLineIndex = %v, want 2 markers", lines)
+	}
+	if lines[2] <= lines[1] {
+		t.Errorf("marker 2 resolved to line %d, at or before marker 1 (line %d): the heading literal was matched", lines[2], lines[1])
+	}
+}
+
+// One marker per link across a link-heavy document, including
+// multi-digit indices; the index must come back complete and in
+// ascending line order (single-pass scan, finding: markerLineIndex was
+// O(links x rendered-bytes)).
+func TestMarkerIndexManyLinks(t *testing.T) {
+	const n = 150
+	var src strings.Builder
+	for i := 1; i <= n; i++ {
+		fmt.Fprintf(&src, "- [item %d](https://example.com/%d.md): filler text\n", i, i)
+	}
+	rendered, links := renderThroughGlamour(t, src.String(), 120)
+	lines := markerLineIndex(rendered, links)
+	if len(lines) != n {
+		t.Fatalf("markerLineIndex found %d markers, want %d", len(lines), n)
+	}
+	prev := -1
+	for i := 1; i <= n; i++ {
+		if lines[i] < prev {
+			t.Fatalf("marker %d on line %d, before marker %d's line %d", i, lines[i], i-1, prev)
+		}
+		prev = lines[i]
+	}
+}
+
+func TestMatchIndexMarker(t *testing.T) {
+	cases := []struct {
+		s   string
+		i   int
+		n   int
+		end int
+		ok  bool
+	}{
+		{"[1]", 0, 1, 3, true},
+		{"[42]", 0, 42, 4, true},
+		{"[\x1b[0m1\x1b[1m2]", 0, 12, 12, true},
+		{"[]", 0, 0, 0, false},
+		{"[x]", 0, 0, 0, false},
+		{"[12", 0, 0, 0, false},
+	}
+	for _, c := range cases {
+		n, end, ok := matchIndexMarker(c.s, c.i)
+		if n != c.n || end != c.end || ok != c.ok {
+			t.Errorf("matchIndexMarker(%q, %d) = (%d, %d, %v), want (%d, %d, %v)", c.s, c.i, n, end, ok, c.n, c.end, c.ok)
+		}
 	}
 }
 

@@ -127,6 +127,43 @@ func TestParseDuplicateBareURLs(t *testing.T) {
 	}
 }
 
+func TestBareURLAfterCodeFence(t *testing.T) {
+	md := "```\nhttps://example.com\n```\n\nhttps://example.com\n"
+	d := Parse("https://example.com/", md)
+
+	if len(d.Links) != 1 {
+		t.Fatalf("got %d links, want 1", len(d.Links))
+	}
+	wantStart := strings.LastIndex(md, "https://example.com")
+	if d.Links[0].Start != wantStart {
+		t.Errorf("link Start = %d, want %d (the bare URL, not the fence content)", d.Links[0].Start, wantStart)
+	}
+	annotated := Annotate(md, d.Links, 0)
+	if !strings.HasPrefix(annotated, "```\nhttps://example.com\n```") {
+		t.Errorf("Annotate spliced a marker into the code fence:\n%s", annotated)
+	}
+	if !strings.Contains(annotated, "**[1]**https://example.com\n") {
+		t.Errorf("bare link did not receive its marker:\n%s", annotated)
+	}
+}
+
+func TestBareURLAfterImage(t *testing.T) {
+	md := "![logo](https://example.com)\n\nhttps://example.com\n"
+	d := Parse("https://example.com/", md)
+
+	if len(d.Links) != 1 {
+		t.Fatalf("got %d links, want 1", len(d.Links))
+	}
+	wantStart := strings.LastIndex(md, "https://example.com")
+	if d.Links[0].Start != wantStart {
+		t.Errorf("link Start = %d, want %d (the bare URL, not the image destination)", d.Links[0].Start, wantStart)
+	}
+	annotated := Annotate(md, d.Links, 0)
+	if !strings.HasPrefix(annotated, "![logo](https://example.com)") {
+		t.Errorf("Annotate corrupted the image syntax:\n%s", annotated)
+	}
+}
+
 func TestParseLinksInStructures(t *testing.T) {
 	md := "# Head [h](https://example.com/h)\n" +
 		"\n" +

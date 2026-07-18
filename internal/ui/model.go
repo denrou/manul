@@ -7,18 +7,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/aymanbagabas/go-osc52/v2"
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
 
 	"github.com/denrou/manul/internal/bookmarks"
 	"github.com/denrou/manul/internal/config"
@@ -51,6 +53,11 @@ type Options struct {
 	Resolver   *discover.Resolver
 	Bookmarks  *bookmarks.Store
 	InitialURL string
+
+	// InitialStatus seeds the statusbar with a startup notice (for
+	// example a rejected config file) that the altscreen would
+	// otherwise hide; cleared on the first keypress like any status.
+	InitialStatus string
 }
 
 // Model is the root bubbletea model.
@@ -74,19 +81,21 @@ type Model struct {
 	replaceNext bool // reload: next load replaces the page, no history push
 
 	viewport   viewport.Model
-	prompt     promptInput
+	prompt     textinput.Model
 	promptOpen bool
 	spin       spinner.Model
 	help       help.Model
 	keys       keyMap
 
 	navSeq      int
+	navCtx      context.Context // current navigation's context; nil when idle
 	cancel      context.CancelFunc
 	loading     bool
 	loadingHost string
 
 	selected    int // Index of the selected link, 0 = none
 	markerLines map[int]int
+	markerLocs  map[int]markerLoc
 	digits      string
 
 	status string // transient; cleared on keypress or successful load
@@ -101,7 +110,8 @@ func New(opts Options) Model {
 	if style == nil {
 		style = ResolveStyle(opts.Config)
 	}
-	prompt := newPromptInput()
+	prompt := textinput.New()
+	prompt.Prompt = ":"
 	prompt.Placeholder = "url or domain"
 	m := Model{
 		cfg:        opts.Config,
@@ -113,6 +123,7 @@ func New(opts Options) Model {
 		spin:       spinner.New(spinner.WithSpinner(spinner.MiniDot)),
 		help:       help.New(),
 		keys:       defaultKeyMap(),
+		status:     opts.InitialStatus,
 	}
 	m.page = page{url: startURL, markdown: m.startMarkdown()}
 	return m
@@ -363,9 +374,14 @@ func (m *Model) handleEsc() {
 // navigation sequence so any in-flight result becomes stale.
 func (m *Model) startNavigate(input string) tea.Cmd {
 	m.cancelNav()
+	// Replace semantics belong to the navigation started by reload()
+	// only; a leftover flag from a canceled or superseded reload must
+	// not corrupt the history of the next navigation.
+	m.replaceNext = false
 	m.navSeq++
 	seq := m.navSeq
 	ctx, cancel := context.WithCancel(context.Background())
+	m.navCtx = ctx
 	m.cancel = cancel
 	m.loading = true
 	m.loadingHost = displayHost(input)
@@ -479,8 +495,10 @@ func (m Model) reload() (tea.Model, tea.Cmd) {
 	if host := hostOf(m.page.url); host != "" {
 		m.resolver.Forget(host)
 	}
+	// Set after startNavigate: it clears the flag on entry.
+	cmd := m.startNavigate(m.page.url)
 	m.replaceNext = true
-	return m, m.startNavigate(m.page.url)
+	return m, cmd
 }
 
 func (m *Model) openPrompt() tea.Cmd {
@@ -521,8 +539,20 @@ func (m *Model) yank() {
 		m.status = "internal page — nothing to yank"
 		return
 	}
-	termenv.Copy(target)
-	m.status = "yanked " + target
+	// bubbletea v1 exposes no clipboard or raw-output API, so the OSC 52
+	// sequence is emitted as one direct Write to stdout (mirroring
+	// termenv.Copy, but with the write error checked). Delivery cannot
+	// be confirmed — terminals may have OSC 52 disabled — so the status
+	// claims only that the sequence was sent.
+	seq := osc52.New(target)
+	if strings.HasPrefix(os.Getenv("TERM"), "screen") {
+		seq = seq.Screen()
+	}
+	if _, err := seq.WriteTo(os.Stdout); err != nil {
+		m.status = "yank failed: " + err.Error()
+		return
+	}
+	m.status = "sent to clipboard (OSC 52): " + target
 }
 
 func (m *Model) addBookmark() {
@@ -628,7 +658,20 @@ func (m *Model) renderCurrent() {
 		}
 	}
 	m.page.rendered = rendered
-	m.markerLines = markerLineIndex(rendered, m.page.doc.Links)
+	m.markerLocs = markerIndex(rendered, m.page.doc.Links)
+	m.markerLines = make(map[int]int, len(m.markerLocs))
+	for idx, loc := range m.markerLocs {
+		m.markerLines[idx] = loc.line
+	}
+	annotatable := 0
+	for _, l := range m.page.doc.Links {
+		if l.Annotatable() {
+			annotatable++
+		}
+	}
+	if missing := annotatable - len(m.markerLocs); missing > 0 && m.status == "" {
+		m.status = fmt.Sprintf("%d link(s) not reachable via tab — follow by number instead", missing)
+	}
 }
 
 // applyContent pushes the cached render (with the selection highlight,
@@ -639,8 +682,11 @@ func (m *Model) applyContent() {
 	}
 	content := m.page.rendered
 	if m.selected != 0 {
-		if highlighted, ok := highlightMarker(content, m.selected); ok {
-			content = highlighted
+		// Use the resolved marker location rather than re-searching:
+		// a bold literal like "# Notes [2]" earlier in the document
+		// must not steal the highlight from the real marker.
+		if loc, ok := m.markerLocs[m.selected]; ok {
+			content = highlightSpan(content, loc.start, loc.end)
 		}
 	}
 	offset := m.viewport.YOffset
@@ -692,7 +738,13 @@ func (m Model) statusBar() string {
 func (m Model) statusLeft() string {
 	switch {
 	case m.loading:
-		return m.spin.View() + " loading " + m.loadingHost + "… (esc cancels)"
+		s := m.spin.View() + " loading " + m.loadingHost + "… (esc cancels)"
+		if m.digits != "" {
+			// Digits typed during a load still target the visible page;
+			// keep the buffer on screen so Enter's effect is predictable.
+			s += " · follow: " + m.digits + "_"
+		}
+		return s
 	case m.digits != "":
 		return "follow: " + m.digits + "_"
 	case m.status != "":

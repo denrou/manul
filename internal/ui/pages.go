@@ -25,13 +25,18 @@ func isInternal(url string) bool {
 }
 
 // startMarkdown composes the start page: the embedded welcome plus a
-// Bookmarks section when the user has any.
+// Bookmarks section when the user has any. A bookmarks read failure is
+// shown in the section instead of silently hiding the bookmarks.
 func (m *Model) startMarkdown() string {
 	md := strings.TrimRight(WelcomeMarkdown, "\n")
 	if m.bookmarks == nil {
 		return md + "\n"
 	}
-	list := bookmarkList(m.bookmarks.Markdown())
+	page, err := m.bookmarks.Markdown()
+	if err != nil {
+		return md + "\n\n## Bookmarks\n\ncould not read " + m.bookmarks.Path() + ": " + err.Error() + "\n"
+	}
+	list := bookmarkList(page)
 	if list == "" {
 		return md + "\n"
 	}

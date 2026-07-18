@@ -86,9 +86,39 @@ func extractLinks(source []byte, root ast.Node) []Link {
 			if v.Segment.Stop > cursor {
 				cursor = v.Segment.Stop
 			}
+		case *ast.FencedCodeBlock:
+			// Code block content is not exposed as ast.Text nodes, so
+			// advance past it explicitly: a URL quoted inside a fence
+			// must not anchor a later autolink's span.
+			if stop := lastLineStop(v.Lines()); stop > cursor {
+				cursor = stop
+			}
+		case *ast.CodeBlock:
+			if stop := lastLineStop(v.Lines()); stop > cursor {
+				cursor = stop
+			}
+		case *ast.HTMLBlock:
+			stop := lastLineStop(v.Lines())
+			if v.HasClosure() && v.ClosureLine.Stop > stop {
+				stop = v.ClosureLine.Stop
+			}
+			if stop > cursor {
+				cursor = stop
+			}
+		case *ast.RawHTML:
+			if v.Segments != nil && v.Segments.Len() > 0 {
+				if stop := v.Segments.At(v.Segments.Len() - 1).Stop; stop > cursor {
+					cursor = stop
+				}
+			}
 		case *ast.Image:
 			// Images are not followable links; their alt text must not
 			// advance the cursor past a possible surrounding link span.
+			// Still advance past the image's own source span so a URL in
+			// its destination cannot anchor a later autolink.
+			if _, e, ok := inlineSpan(source, v); ok && e > cursor {
+				cursor = e
+			}
 			return ast.WalkSkipChildren, nil
 		case *ast.AutoLink:
 			l := Link{Text: string(v.Label(source)), Dest: string(v.URL(source)), Start: -1, End: -1}
@@ -101,7 +131,7 @@ func extractLinks(source []byte, root ast.Node) []Link {
 			links = append(links, l)
 		case *ast.Link:
 			l := Link{Text: linkText(source, v), Dest: string(v.Destination), Start: -1, End: -1}
-			if s, e, ok := inlineLinkSpan(source, v); ok {
+			if s, e, ok := inlineSpan(source, v); ok {
 				l.Start, l.End = s, e
 			}
 			links = append(links, l)
@@ -149,13 +179,22 @@ func autoLinkSpan(source []byte, n *ast.AutoLink, cursor int) (start, end int, o
 	return start, end, true
 }
 
-// inlineLinkSpan computes the full source span of an inline link
-// ([text](dest ...)). goldmark's ast.Link has no source position, so the span
+// lastLineStop returns the source offset just past the last line segment,
+// or -1 when the node holds no lines.
+func lastLineStop(lines *text.Segments) int {
+	if lines == nil || lines.Len() == 0 {
+		return -1
+	}
+	return lines.At(lines.Len() - 1).Stop
+}
+
+// inlineSpan computes the full source span of an inline link ([text](dest
+// ...)) or image. goldmark's ast.Link has no source position, so the span
 // is reconstructed from the text-leaf segments: walk outward over emphasis
 // and code-span delimiters to the enclosing brackets, then scan forward past
 // the destination (nested parens, optional title). Any mismatch — including
 // reference-style links, where ']' is not followed by '(' — reports false.
-func inlineLinkSpan(source []byte, n *ast.Link) (start, end int, ok bool) {
+func inlineSpan(source []byte, n ast.Node) (start, end int, ok bool) {
 	minStart, maxStop := textExtent(n)
 	if minStart < 0 {
 		return 0, 0, false
