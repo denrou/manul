@@ -29,6 +29,15 @@
 - `a` — bookmark the current page (title: first heading, else URL);
   bookmarks appear on the start page
 
+## Search in page
+
+- `/` — search the rendered page (smart case: all-lowercase queries
+  match case-insensitively, any uppercase makes the search exact;
+  ASCII folding). All matches highlight; the view jumps to the first
+  match at or below your position.
+- `n` / `N` — next / previous match (wraps around)
+- `Esc` — clear the search
+
 ## Pipe to a command
 
 - `|` — run a shell command with the current page's raw markdown on
