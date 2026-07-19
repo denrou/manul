@@ -43,3 +43,11 @@ Wheel scrolling works when `mouse = true` is set in
 your terminal's native text selection — in most terminals, hold
 `Shift` while dragging to select text anyway. With `mouse = false`
 (the default), selection works normally and you scroll with the keys.
+
+## Home page
+
+By default a no-argument launch shows this built-in start page. Set
+`home = "<url or domain>"` in `~/.config/manul/config.toml` to land
+somewhere else — for example `home = "llmstxthub.com"`, a large
+auto-generated markdown directory of sites implementing llms.txt.
+The built-in start page stays one `s` away.
