@@ -29,6 +29,14 @@
 - `a` — bookmark the current page (title: first heading, else URL);
   bookmarks appear on the start page
 
+## Link hints (vimium style)
+
+- `f` — switch the visible links from numbers to letter labels; type a
+  label to follow its link instantly. Single letters cover up to 26
+  on-screen links, then fixed-length combinations kick in.
+- `Esc` — back to numbers without following anything.
+- Note: `f` no longer pages down (Space, PgDn, and `d` still do).
+
 ## Search in page
 
 - `/` — search the rendered page (smart case: all-lowercase queries

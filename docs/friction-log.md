@@ -73,3 +73,20 @@ Entry format (copy the block):
   query survives resizes, clears on navigation
 - idea: `/` on the huge directory page + `|` pipes make manul a decent
   llms.txt exploration tool already; regex search only if asked for
+
+## 2026-07-19 — following by number is slower than vimium's letters
+
+- expected: vimium's `f` hint flow — letters are faster to type than
+  numbers (better finger access, 26 symbols vs 10 before going
+  multi-char)
+- got: numbers only; fine for precision, slow for rapid hopping
+- hurt: 3
+- resolved: `f` switches visible links to letter hints (home-row-first
+  alphabet, single letters up to 26 on-screen links, fixed-width combos
+  beyond); typing a label follows instantly; Esc returns to numbers;
+  labels are padded to the numeric marker's width so the layout doesn't
+  shift. Trade-off accepted: `f` no longer pages down (Space/PgDn/d
+  remain).
+- idea: numbers and hints now coexist as two speeds (precise vs fast);
+  if configurable keybindings land, the hint alphabet should be
+  configurable too (e.g. azerty home row)
