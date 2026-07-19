@@ -99,6 +99,9 @@ type Model struct {
 	markerLocs  map[int]markerLoc
 	digits      string
 	search      searchState
+	hintMode    bool
+	hintBuf     string
+	hintTargets []hintTarget
 
 	status string // transient; cleared on keypress or successful load
 }
@@ -285,6 +288,29 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	if m.hintMode {
+		switch s := msg.String(); {
+		case s == "esc":
+			m.exitHints()
+			return m, nil
+		case len(s) == 1 && s[0] >= 'a' && s[0] <= 'z':
+			m.hintBuf += s
+			idx, exact, viable := matchHint(m.hintTargets, m.hintBuf)
+			switch {
+			case exact:
+				m.exitHints()
+				return m, m.followIndex(idx)
+			case !viable:
+				m.status = fmt.Sprintf("no hint %q — esc for numbers", m.hintBuf)
+				m.hintBuf = ""
+			}
+			return m, nil
+		default:
+			// Any other key leaves hint mode and is handled normally.
+			m.exitHints()
+		}
+	}
+
 	if s := msg.String(); len(s) == 1 && s[0] >= '0' && s[0] <= '9' {
 		if len(m.digits) < 6 {
 			m.digits += s
@@ -346,6 +372,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.SearchPrev):
 		m.cycleSearch(-1)
+		return m, nil
+
+	case key.Matches(msg, m.keys.Hint):
+		m.enterHints()
 		return m, nil
 
 	case key.Matches(msg, m.keys.Open):
@@ -569,6 +599,29 @@ func (m *Model) closePrompt() {
 	m.syncViewportSize()
 }
 
+// enterHints switches the visible link markers to vimium-style letter
+// labels; typing a label follows its link, Esc returns to numbers.
+func (m *Model) enterHints() {
+	targets := visibleHints(m.markerLocs, m.viewport.YOffset, m.viewport.Height)
+	if len(targets) == 0 {
+		m.status = "no links on screen to hint"
+		return
+	}
+	m.hintMode = true
+	m.hintBuf = ""
+	m.hintTargets = targets
+	m.selected = 0
+	m.digits = ""
+	m.applyContent()
+}
+
+func (m *Model) exitHints() {
+	m.hintMode = false
+	m.hintBuf = ""
+	m.hintTargets = nil
+	m.applyContent()
+}
+
 // startSearch computes matches for query on the current render and
 // jumps to the first one at or below the viewport top. An empty query
 // clears the search.
@@ -727,6 +780,9 @@ func (m *Model) setPage(url, markdown string) {
 	m.selected = 0
 	m.digits = ""
 	m.search = searchState{}
+	m.hintMode = false
+	m.hintBuf = ""
+	m.hintTargets = nil
 	m.applyRender()
 }
 
@@ -799,17 +855,23 @@ func (m *Model) applyContent() {
 		return
 	}
 	content := m.page.rendered
-	spans := make([]span, 0, len(m.search.matches)+1)
-	spans = append(spans, m.search.matches...)
-	if m.selected != 0 {
-		// Use the resolved marker location rather than re-searching:
-		// a bold literal like "# Notes [2]" earlier in the document
-		// must not steal the highlight from the real marker.
-		if loc, ok := m.markerLocs[m.selected]; ok {
-			spans = append(spans, span{start: loc.start, end: loc.end})
+	if m.hintMode {
+		// Letter labels replace the numeric markers; other highlights
+		// pause so the hints are the only thing that pops.
+		content = renderHints(content, m.hintTargets)
+	} else {
+		spans := make([]span, 0, len(m.search.matches)+1)
+		spans = append(spans, m.search.matches...)
+		if m.selected != 0 {
+			// Use the resolved marker location rather than re-searching:
+			// a bold literal like "# Notes [2]" earlier in the document
+			// must not steal the highlight from the real marker.
+			if loc, ok := m.markerLocs[m.selected]; ok {
+				spans = append(spans, span{start: loc.start, end: loc.end})
+			}
 		}
+		content = highlightSpans(content, spans)
 	}
-	content = highlightSpans(content, spans)
 	offset := m.viewport.YOffset
 	m.viewport.SetContent(content)
 	m.viewport.SetYOffset(offset)
@@ -866,6 +928,11 @@ func (m Model) statusLeft() string {
 			s += " · follow: " + m.digits + "_"
 		}
 		return s
+	case m.hintMode:
+		if m.status != "" {
+			return m.status
+		}
+		return "follow hint: " + m.hintBuf + "_ (esc back to numbers)"
 	case m.digits != "":
 		return "follow: " + m.digits + "_"
 	case m.status != "":

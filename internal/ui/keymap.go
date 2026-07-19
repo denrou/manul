@@ -15,6 +15,7 @@ type keyMap struct {
 	Search     key.Binding
 	SearchNext key.Binding
 	SearchPrev key.Binding
+	Hint       key.Binding
 	Open       key.Binding
 	Yank       key.Binding
 	Bookmark   key.Binding
@@ -39,6 +40,7 @@ func defaultKeyMap() keyMap {
 		Search:     key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search")),
 		SearchNext: key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "next match")),
 		SearchPrev: key.NewBinding(key.WithKeys("N"), key.WithHelp("N", "previous match")),
+		Hint:       key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "link hints")),
 		Open:       key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open in browser")),
 		Yank:       key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "yank url")),
 		Bookmark:   key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add bookmark")),
@@ -62,7 +64,7 @@ func (k keyMap) ShortHelp() []key.Binding {
 // embedded help page ('?').
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.NextLink, k.PrevLink, k.Follow},
+		{k.NextLink, k.PrevLink, k.Follow, k.Hint},
 		{k.Back, k.Forward, k.Prompt, k.Reload},
 		{k.Search, k.SearchNext, k.SearchPrev},
 		{k.Pipe, k.Open, k.Yank, k.Bookmark, k.Start},
