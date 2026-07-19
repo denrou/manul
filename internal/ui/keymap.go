@@ -11,6 +11,7 @@ type keyMap struct {
 	Back     key.Binding
 	Forward  key.Binding
 	Prompt   key.Binding
+	Pipe     key.Binding
 	Open     key.Binding
 	Yank     key.Binding
 	Bookmark key.Binding
@@ -31,6 +32,7 @@ func defaultKeyMap() keyMap {
 		Back:     key.NewBinding(key.WithKeys("backspace", "[", "B", "H"), key.WithHelp("H", "back")),
 		Forward:  key.NewBinding(key.WithKeys("]", "L"), key.WithHelp("L", "forward")),
 		Prompt:   key.NewBinding(key.WithKeys(":"), key.WithHelp(":", "open url")),
+		Pipe:     key.NewBinding(key.WithKeys("|"), key.WithHelp("|", "pipe page")),
 		Open:     key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open in browser")),
 		Yank:     key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "yank url")),
 		Bookmark: key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add bookmark")),
@@ -56,7 +58,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.NextLink, k.PrevLink, k.Follow},
 		{k.Back, k.Forward, k.Prompt, k.Reload},
-		{k.Open, k.Yank, k.Bookmark, k.Start},
+		{k.Pipe, k.Open, k.Yank, k.Bookmark, k.Start},
 		{k.Top, k.Bottom, k.Help, k.Quit},
 	}
 }

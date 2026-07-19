@@ -83,6 +83,7 @@ type Model struct {
 	viewport   viewport.Model
 	prompt     textinput.Model
 	promptOpen bool
+	promptKind promptKind
 	spin       spinner.Model
 	help       help.Model
 	keys       keyMap
@@ -195,6 +196,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = string(msg)
 		return m, nil
 
+	case pipeDoneMsg:
+		m.status = ""
+		m.showDocument(pipeURL, msg.page)
+		return m, nil
+
 	case spinner.TickMsg:
 		if !m.loading {
 			return m, nil
@@ -257,9 +263,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "enter":
 			input := strings.TrimSpace(m.prompt.Value())
+			kind := m.promptKind
 			m.closePrompt()
 			if input == "" {
 				return m, nil
+			}
+			if kind == promptPipe {
+				m.status = "running: " + input
+				return m, runPipe(input, m.page.markdown, m.page.url)
 			}
 			return m, m.startNavigate(input)
 		default:
@@ -316,7 +327,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, m.keys.Prompt):
-		return m, m.openPrompt()
+		return m, m.openPrompt(promptGoto)
+
+	case key.Matches(msg, m.keys.Pipe):
+		return m, m.openPrompt(promptPipe)
 
 	case key.Matches(msg, m.keys.Open):
 		return m, m.openCurrent()
@@ -501,7 +515,23 @@ func (m Model) reload() (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m *Model) openPrompt() tea.Cmd {
+// promptKind selects what the URL-prompt input drives on Enter.
+type promptKind int
+
+const (
+	promptGoto promptKind = iota // navigate to the typed URL/domain
+	promptPipe                   // pipe the page source through a shell command
+)
+
+func (m *Model) openPrompt(kind promptKind) tea.Cmd {
+	m.promptKind = kind
+	if kind == promptPipe {
+		m.prompt.Prompt = "|"
+		m.prompt.Placeholder = "shell command (page source on stdin)"
+	} else {
+		m.prompt.Prompt = ":"
+		m.prompt.Placeholder = "url or domain"
+	}
 	m.promptOpen = true
 	m.prompt.SetValue("")
 	m.syncViewportSize()

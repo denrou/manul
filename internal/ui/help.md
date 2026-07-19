@@ -29,6 +29,15 @@
 - `a` — bookmark the current page (title: first heading, else URL);
   bookmarks appear on the start page
 
+## Pipe to a command
+
+- `|` — run a shell command with the current page's raw markdown on
+  stdin; the output opens as a page (go back with `H`). Example on a
+  directory page: `| grep -c llms.txt` counts the listed sites.
+- Outside the TUI, `manul --dump <url>` prints the resolved markdown
+  to stdout for real shell pipelines:
+  `manul --dump llmstxthub.com | grep -c llms.txt`
+
 ## Everything else
 
 - `Esc` — one layer per press: close the URL prompt, cancel an

@@ -2,9 +2,11 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
@@ -27,10 +29,14 @@ func main() {
 
 func run() error {
 	showVersion := flag.Bool("version", false, "print version and exit")
+	dump := flag.Bool("dump", false, "resolve a URL and print its markdown to stdout (no TUI)")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println("manul " + version)
 		return nil
+	}
+	if *dump {
+		return dumpMarkdown(flag.Arg(0))
 	}
 
 	var initialStatus string
@@ -76,4 +82,24 @@ func run() error {
 	}
 	_, err = tea.NewProgram(model, opts...).Run()
 	return err
+}
+
+// dumpMarkdown resolves target through the normal discovery pipeline
+// and prints the raw markdown, making manul usable in shell pipelines:
+//
+//	manul --dump llmstxthub.com | grep -c llms.txt
+func dumpMarkdown(target string) error {
+	if target == "" {
+		return fmt.Errorf("--dump requires a URL or domain argument")
+	}
+	resolver := &discover.Resolver{}
+	_, markdown, err := resolver.Resolve(context.Background(), target)
+	if err != nil {
+		return err
+	}
+	fmt.Print(markdown)
+	if !strings.HasSuffix(markdown, "\n") {
+		fmt.Println()
+	}
+	return nil
 }

@@ -47,3 +47,16 @@ Entry format (copy the block):
 - idea: user-configurable keybindings in config.toml (remap navigation to
   taste) — real v2 item; also audit which other bindings are invisible
   outside the `?` page
+
+## 2026-07-18 — no way to post-process a page (reported while dogfooding)
+
+- expected: pipe the page through a shell command, e.g. count the links
+  on the directory landing page with `grep llms.txt | wc -l`
+- got: no escape hatch from the TUI to the shell in either direction
+- hurt: 3
+- resolved: `|` runs a shell command with the page source on stdin and
+  opens the output as a page (back with `H`); `manul --dump <url>` prints
+  resolved markdown to stdout for real pipelines. First live use:
+  `manul --dump llmstxthub.com | grep -c llms.txt` → 2580
+- idea: the pipe-result-as-page pattern composes (pipe a pipe result);
+  worth exploring saved commands/aliases if this gets heavy use
