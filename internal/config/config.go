@@ -18,6 +18,9 @@ type Config struct {
 	MaxWidth  int    `toml:"max_width"`
 	StylePath string `toml:"style_path"`
 	Mouse     bool   `toml:"mouse"`
+	// Home is where a no-argument launch lands: any URL or bare domain
+	// (resolved through discovery). Empty means the built-in start page.
+	Home string `toml:"home"`
 }
 
 // Defaults returns the configuration used when no config file exists.

@@ -56,12 +56,17 @@ func run() error {
 		store = bookmarks.New(dir)
 	}
 
+	initialURL := flag.Arg(0)
+	if initialURL == "" {
+		initialURL = cfg.Home // empty Home keeps the built-in start page
+	}
+
 	model := ui.New(ui.Options{
 		Config:        cfg,
 		Style:         style,
 		Resolver:      &discover.Resolver{},
 		Bookmarks:     store,
-		InitialURL:    flag.Arg(0),
+		InitialURL:    initialURL,
 		InitialStatus: initialStatus,
 	})
 

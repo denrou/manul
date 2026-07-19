@@ -76,12 +76,13 @@ theme = "light"
 max_width = 80
 style_path = "/tmp/style.json"
 mouse = true
+home = "llmstxthub.com"
 `)
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
-	want := Config{Theme: "light", MaxWidth: 80, StylePath: "/tmp/style.json", Mouse: true}
+	want := Config{Theme: "light", MaxWidth: 80, StylePath: "/tmp/style.json", Mouse: true, Home: "llmstxthub.com"}
 	if cfg != want {
 		t.Errorf("Load() = %+v, want %+v", cfg, want)
 	}
