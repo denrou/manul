@@ -28,8 +28,8 @@ func defaultKeyMap() keyMap {
 		NextLink: key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next link")),
 		PrevLink: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "previous link")),
 		Follow:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "follow link")),
-		Back:     key.NewBinding(key.WithKeys("backspace", "[", "B"), key.WithHelp("backspace", "back")),
-		Forward:  key.NewBinding(key.WithKeys("]"), key.WithHelp("]", "forward")),
+		Back:     key.NewBinding(key.WithKeys("backspace", "[", "B", "H"), key.WithHelp("H", "back")),
+		Forward:  key.NewBinding(key.WithKeys("]", "L"), key.WithHelp("L", "forward")),
 		Prompt:   key.NewBinding(key.WithKeys(":"), key.WithHelp(":", "open url")),
 		Open:     key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open in browser")),
 		Yank:     key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "yank url")),
@@ -44,9 +44,10 @@ func defaultKeyMap() keyMap {
 	}
 }
 
-// ShortHelp is the statusbar help line.
+// ShortHelp is the statusbar help line. Back is included because an
+// invisible back button reads as a missing one (friction log, day one).
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Prompt, k.NextLink, k.Help, k.Quit}
+	return []key.Binding{k.Prompt, k.NextLink, k.Back, k.Help, k.Quit}
 }
 
 // FullHelp satisfies help.KeyMap; the full reference lives on the

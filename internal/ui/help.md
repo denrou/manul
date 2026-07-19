@@ -16,7 +16,8 @@
 ## Navigation
 
 - `:` — open a URL or bare domain (manul discovers the markdown twin)
-- `Backspace`, `[`, `B` — back; `]` — forward
+- `H`, `Backspace`, `[`, `B` — back; `L`, `]` — forward
+  (`H`/`L` follow the vimium/tridactyl convention)
 - `r` — reload, bypassing the per-host discovery cache
 - `s` — start page (directory and bookmarks)
 

@@ -33,3 +33,17 @@ Entry format (copy the block):
 - hurt: 3
 - idea: strong evidence for the annuaire brick — the markdown web has
   almost no markdown-native directory; manul could generate/host its own
+
+## 2026-07-18 — no way back after following a link (reported while dogfooding)
+
+- expected: `H`/`L` to go back/forward, as in the Firefox vim plugins
+  (vimium/tridactyl muscle memory)
+- got: seemingly no history navigation. It existed (`Backspace`/`[`/`B`
+  back, `]` forward) but under different keys AND invisible — the
+  statusbar short help never mentioned it, so it read as missing.
+- hurt: 4
+- resolved: `H`/`L` added as back/forward aliases; back now shown in the
+  statusbar short help
+- idea: user-configurable keybindings in config.toml (remap navigation to
+  taste) — real v2 item; also audit which other bindings are invisible
+  outside the `?` page

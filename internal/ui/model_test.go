@@ -460,6 +460,16 @@ func TestBackForwardRestoresScroll(t *testing.T) {
 	if m.page.url != "https://a.test/a.md" {
 		t.Errorf("'B' back alias landed on %s", m.page.url)
 	}
+
+	// H/L are back/forward aliases (vimium/tridactyl habit).
+	m, _ = apply(t, m, runeKey('L'))
+	if m.page.url != "https://b.test/b.md" {
+		t.Errorf("'L' forward alias landed on %s", m.page.url)
+	}
+	m, _ = apply(t, m, runeKey('H'))
+	if m.page.url != "https://a.test/a.md" {
+		t.Errorf("'H' back alias landed on %s", m.page.url)
+	}
 }
 
 func TestStartPageIncludesBookmarks(t *testing.T) {
