@@ -98,6 +98,7 @@ type Model struct {
 	markerLines map[int]int
 	markerLocs  map[int]markerLoc
 	digits      string
+	search      searchState
 
 	status string // transient; cleared on keypress or successful load
 }
@@ -265,6 +266,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			input := strings.TrimSpace(m.prompt.Value())
 			kind := m.promptKind
 			m.closePrompt()
+			if kind == promptSearch {
+				m.startSearch(input) // empty input clears the search
+				return m, nil
+			}
 			if input == "" {
 				return m, nil
 			}
@@ -332,6 +337,17 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Pipe):
 		return m, m.openPrompt(promptPipe)
 
+	case key.Matches(msg, m.keys.Search):
+		return m, m.openPrompt(promptSearch)
+
+	case key.Matches(msg, m.keys.SearchNext):
+		m.cycleSearch(1)
+		return m, nil
+
+	case key.Matches(msg, m.keys.SearchPrev):
+		m.cycleSearch(-1)
+		return m, nil
+
 	case key.Matches(msg, m.keys.Open):
 		return m, m.openCurrent()
 
@@ -380,6 +396,9 @@ func (m *Model) handleEsc() {
 		m.digits = ""
 	case m.selected != 0:
 		m.selected = 0
+		m.applyContent()
+	case m.search.active():
+		m.search = searchState{}
 		m.applyContent()
 	}
 }
@@ -519,16 +538,21 @@ func (m Model) reload() (tea.Model, tea.Cmd) {
 type promptKind int
 
 const (
-	promptGoto promptKind = iota // navigate to the typed URL/domain
-	promptPipe                   // pipe the page source through a shell command
+	promptGoto   promptKind = iota // navigate to the typed URL/domain
+	promptPipe                     // pipe the page source through a shell command
+	promptSearch                   // search within the rendered page
 )
 
 func (m *Model) openPrompt(kind promptKind) tea.Cmd {
 	m.promptKind = kind
-	if kind == promptPipe {
+	switch kind {
+	case promptPipe:
 		m.prompt.Prompt = "|"
 		m.prompt.Placeholder = "shell command (page source on stdin)"
-	} else {
+	case promptSearch:
+		m.prompt.Prompt = "/"
+		m.prompt.Placeholder = "search (smart case; n/N to cycle)"
+	default:
 		m.prompt.Prompt = ":"
 		m.prompt.Placeholder = "url or domain"
 	}
@@ -543,6 +567,68 @@ func (m *Model) closePrompt() {
 	m.prompt.Blur()
 	m.prompt.SetValue("")
 	m.syncViewportSize()
+}
+
+// startSearch computes matches for query on the current render and
+// jumps to the first one at or below the viewport top. An empty query
+// clears the search.
+func (m *Model) startSearch(query string) {
+	if query == "" {
+		m.search = searchState{}
+		m.applyContent()
+		return
+	}
+	matches, lines := findSearchMatches(m.page.rendered, query)
+	m.search = searchState{query: query, matches: matches, lines: lines}
+	if len(matches) == 0 {
+		m.status = fmt.Sprintf("no matches for %q", query)
+		m.applyContent()
+		return
+	}
+	m.search.current = firstMatchAtOrBelow(lines, m.viewport.YOffset)
+	m.applyContent()
+	m.scrollToMatch()
+}
+
+// cycleSearch moves to the next (+1) or previous (-1) match, wrapping.
+func (m *Model) cycleSearch(dir int) {
+	n := len(m.search.matches)
+	if n == 0 {
+		if m.search.active() {
+			m.status = fmt.Sprintf("no matches for %q", m.search.query)
+		} else {
+			m.status = "no active search — press / first"
+		}
+		return
+	}
+	next := (m.search.current + dir + n) % n
+	if dir > 0 && next < m.search.current {
+		m.status = "wrapped to top"
+	} else if dir < 0 && next > m.search.current {
+		m.status = "wrapped to bottom"
+	}
+	m.search.current = next
+	m.scrollToMatch()
+}
+
+func (m *Model) scrollToMatch() {
+	if m.search.current >= len(m.search.lines) {
+		return
+	}
+	line := m.search.lines[m.search.current]
+	m.viewport.SetYOffset(minimalScroll(m.viewport.YOffset, m.viewport.Height, line))
+}
+
+// refreshSearch recomputes match positions after a re-render (the byte
+// spans and line numbers are render-specific).
+func (m *Model) refreshSearch() {
+	if !m.search.active() {
+		return
+	}
+	query := m.search.query
+	matches, lines := findSearchMatches(m.page.rendered, query)
+	current := min(m.search.current, max(0, len(matches)-1))
+	m.search = searchState{query: query, matches: matches, lines: lines, current: current}
 }
 
 func (m *Model) openCurrent() tea.Cmd {
@@ -640,6 +726,7 @@ func (m *Model) setPage(url, markdown string) {
 	m.page = page{url: url, markdown: markdown}
 	m.selected = 0
 	m.digits = ""
+	m.search = searchState{}
 	m.applyRender()
 }
 
@@ -652,6 +739,7 @@ func (m *Model) applyRender() {
 	}
 	m.ensureRenderer()
 	m.renderCurrent()
+	m.refreshSearch()
 	m.applyContent()
 }
 
@@ -711,14 +799,17 @@ func (m *Model) applyContent() {
 		return
 	}
 	content := m.page.rendered
+	spans := make([]span, 0, len(m.search.matches)+1)
+	spans = append(spans, m.search.matches...)
 	if m.selected != 0 {
 		// Use the resolved marker location rather than re-searching:
 		// a bold literal like "# Notes [2]" earlier in the document
 		// must not steal the highlight from the real marker.
 		if loc, ok := m.markerLocs[m.selected]; ok {
-			content = highlightSpan(content, loc.start, loc.end)
+			spans = append(spans, span{start: loc.start, end: loc.end})
 		}
 	}
+	content = highlightSpans(content, spans)
 	offset := m.viewport.YOffset
 	m.viewport.SetContent(content)
 	m.viewport.SetYOffset(offset)
@@ -779,6 +870,12 @@ func (m Model) statusLeft() string {
 		return "follow: " + m.digits + "_"
 	case m.status != "":
 		return m.status
+	case m.search.active():
+		if len(m.search.matches) == 0 {
+			return fmt.Sprintf("/%s · no matches (esc clears)", m.search.query)
+		}
+		return fmt.Sprintf("/%s · %d/%d (n/N, esc clears)",
+			m.search.query, m.search.current+1, len(m.search.matches))
 	case m.selected != 0:
 		if link, ok := m.linkByIndex(m.selected); ok {
 			return fmt.Sprintf("[%d] %s", link.Index, link.Dest)

@@ -60,3 +60,16 @@ Entry format (copy the block):
   `manul --dump llmstxthub.com | grep -c llms.txt` → 2580
 - idea: the pipe-result-as-page pattern composes (pipe a pipe result);
   worth exploring saved commands/aliases if this gets heavy use
+
+## 2026-07-19 — no search in page (reported while dogfooding)
+
+- expected: `/` to search within the current page, pager-style
+- got: nothing — search-in-page was consciously cut from the MVP
+  (ADR-0008) and dogfooding promoted it immediately
+- hurt: 4
+- resolved: `/` searches the rendered page (smart case, ASCII fold,
+  matches highlighted, ANSI-aware so styled text matches), `n`/`N`
+  cycle with wrap, Esc clears; match counter lives in the statusbar;
+  query survives resizes, clears on navigation
+- idea: `/` on the huge directory page + `|` pipes make manul a decent
+  llms.txt exploration tool already; regex search only if asked for
